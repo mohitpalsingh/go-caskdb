@@ -101,9 +101,23 @@ func decodeHeader(header []byte) (uint32, uint32, uint32) {
 }
 
 func encodeKV(timestamp uint32, key string, value string) (int, []byte) {
-	panic("implement me")
+	var KVBuffer bytes.Buffer
+
+	header := encodeHeader(timestamp, uint32(len(key)), uint32(len(value)))
+
+	KVBuffer.Write(header)
+	KVBuffer.WriteString(key)
+	KVBuffer.WriteString(value)
+
+	return KVBuffer.Len(), KVBuffer.Bytes()
 }
 
 func decodeKV(data []byte) (uint32, string, string) {
-	panic("implement me")
+	header := data[:12]
+
+	timestamp, keySize, valueSize := decodeHeader(header)
+	key := string(data[12 : 12+keySize])
+	value := string(data[12+keySize : 12+keySize+valueSize])
+
+	return timestamp, key, value
 }
