@@ -2,8 +2,11 @@ package caskdb
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"os"
+	"time"
 )
 
 // DiskStore is a Log-Structured Hash Table as described in the BitCask paper. We
@@ -47,6 +50,9 @@ import (
 //	   	store.Set("othello", "shakespeare")
 //	   	author := store.Get("othello")
 type DiskStore struct {
+	file          *os.File
+	keyDir        map[string]KeyEntry
+	writePosition uint32
 }
 
 func isFileExists(fileName string) bool {
@@ -58,17 +64,87 @@ func isFileExists(fileName string) bool {
 }
 
 func NewDiskStore(fileName string) (*DiskStore, error) {
-	panic("implement me")
+	ds := &DiskStore{keyDir: make(map[string]KeyEntry)}
+
+	if isFileExists(fileName) {
+		ds.initKeyDir(fileName)
+	}
+
+	file, err := os.OpenFile(fileName, os.O_APPEND|os.O_RDWR|os.O_CREATE, 0666)
+	if err != nil {
+		return nil, err
+	}
+	ds.file = file
+	return ds, nil
 }
 
 func (d *DiskStore) Get(key string) string {
-	panic("implement me")
+	keyEntry, ok := d.keyDir[key]
+	if !ok {
+		return ""
+	}
+
+	d.file.Seek(int64(keyEntry.position), 0)
+	data := make([]byte, keyEntry.totalSize)
+	_, err := io.ReadFull(d.file, data)
+	if err != nil {
+		panic("read error!")
+	}
+	_, _, value := decodeKV(data)
+	return value
 }
 
 func (d *DiskStore) Set(key string, value string) {
-	panic("implement me")
+	timestamp := uint32(time.Now().Unix())
+	size, data := encodeKV(timestamp, key, value)
+	d.write(data)
+	d.keyDir[key] = NewKeyEntry(timestamp, uint32(d.writePosition), uint32(size))
+	d.writePosition += uint32(size)
 }
 
 func (d *DiskStore) Close() bool {
-	panic("implement me")
+	d.file.Sync()
+	if err := d.file.Close(); err != nil {
+		return false
+	}
+	return true
+}
+
+func (d *DiskStore) write(data []byte) {
+	if _, err := d.file.Write(data); err != nil {
+		panic(err)
+	}
+	if err := d.file.Sync(); err != nil {
+		panic(err)
+	}
+}
+
+func (d *DiskStore) initKeyDir(existingFile string) {
+	file, _ := os.Open(existingFile)
+	defer file.Close()
+	for {
+		header := make([]byte, headerSize)
+		_, err := io.ReadFull(file, header)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			break
+		}
+		timestamp, keySize, valueSize := decodeHeader(header)
+		key := make([]byte, keySize)
+		value := make([]byte, valueSize)
+		_, err = io.ReadFull(file, key)
+		if err != nil {
+			break
+		}
+		_, err = io.ReadFull(file, value)
+		if err != nil {
+			break
+		}
+		totalSize := headerSize + keySize + valueSize
+		d.keyDir[string(key)] = NewKeyEntry(timestamp, uint32(d.writePosition), totalSize)
+		d.writePosition += uint32(totalSize)
+		fmt.Printf("loaded key=%s, value=%s\n", key, value)
+	}
 }
